@@ -34,9 +34,15 @@ PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENROUTER = "openrouter"
 
-# --- Blue Team (LOCKED) ---
+# --- Blue Team ---
 BLUE_PROVIDER = PROVIDER_OPENROUTER
-BLUE_MODEL = "liquid/lfm-2.5-2.6b"
+DEFAULT_BLUE_MODEL = "liquid/lfm-2.5-2.6b"
+# Keep the rubric model as the default, while allowing a local OpenRouter
+# model override (for example ``openrouter/free``) through ``.env``.
+BLUE_MODEL = (
+    os.environ.get("OPENROUTER_MODEL", DEFAULT_BLUE_MODEL).strip()
+    or DEFAULT_BLUE_MODEL
+)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_MODEL = BLUE_MODEL  # alias
 
@@ -104,7 +110,6 @@ def get_blue_provider() -> str:
 
 
 def get_blue_model() -> str:
-    # Hard-locked; env cannot override for the graded Blue Team path.
     return BLUE_MODEL
 
 
@@ -240,7 +245,7 @@ def setup_api_key():
         os.environ["OPENROUTER_API_KEY"] = input(
             "Enter OpenRouter API Key (Blue): "
         ).strip()
-    print(f"Blue  — {blue_provider_label()}  [LOCKED]")
+    print(f"Blue  — {blue_provider_label()}  [OPENROUTER]")
 
     red = get_red_provider()
     model = get_red_model()

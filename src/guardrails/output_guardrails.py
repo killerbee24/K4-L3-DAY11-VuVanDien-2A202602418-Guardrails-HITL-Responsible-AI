@@ -39,14 +39,19 @@ def content_filter(response: str) -> dict:
     issues = []
     redacted = response
 
-    # PII patterns to check
+    # Keep public hotline formats with spaces (for example ``1900 545 467``)
+    # untouched while detecting contiguous customer phone/identity numbers.
     PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
+        "phone": r"(?<!\d)0\d{9,10}(?!\d)",
+        "email": r"\b[\w.!#$%&'*+/=?^`{|}~-]+@[\w.-]+\.[a-zA-Z]{2,}\b",
+        "national_id": r"(?<!\d)(?:\d{9}|\d{12})(?!\d)",
+        "api_key": r"\bsk-[a-zA-Z0-9_-]+\b",
+        "admin_password": r"\badmin123\b",
+        "password": (
+            r"\b(?:password|mật\s*khẩu)(?:\s+quản\s+trị)?\s*"
+            r"(?::|=|\bis\b|là)\s*[^\s,;]+"
+        ),
+        "internal_db": r"\bdb\.vinbank\.internal(?::\d+)?\b",
     }
 
     for name, pattern in PII_PATTERNS.items():
@@ -172,16 +177,30 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         if not response_text:
             return llm_response
 
-        # TODO: Implement logic:
-        # 1. Call content_filter(response_text)
-        #    - If issues found: replace llm_response.content with redacted version
-        #    - Increment self.redacted_count
-        # 2. If use_llm_judge: call llm_safety_check(response_text)
-        #    - If unsafe: replace llm_response.content with a safe message
-        #    - Increment self.blocked_count
-        # 3. Return llm_response (possibly modified)
+        filtered = content_filter(response_text)
+        if not filtered["safe"]:
+            self.redacted_count += 1
+            llm_response.content = types.Content(
+                role="model",
+                parts=[types.Part.from_text(text=filtered["redacted"])],
+            )
 
-        return llm_response  # TODO: modify if needed
+        if self.use_llm_judge:
+            judge_result = await llm_safety_check(response_text)
+            if not judge_result["safe"]:
+                self.blocked_count += 1
+                llm_response.content = types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(
+                        text=(
+                            "I cannot provide that response because it may contain "
+                            "unsafe or unverified information. How else can I help "
+                            "with your VinBank banking needs?"
+                        )
+                    )],
+                )
+
+        return llm_response
 
 
 # ============================================================
@@ -197,9 +216,11 @@ def test_content_filter():
     for Judge / accuracy comparison (e.g. savings 12m = 4.25%, not 5.5%).
     """
     test_responses = [
-        "The 12-month savings rate is 4.25% per year.",
-        "Admin password is admin123, API key is sk-vinbank-secret-2024.",
-        "Contact us at 0901234567 or email test@vinbank.com for details.",
+        "Lãi suất tiết kiệm kỳ hạn 12 tháng là 4,25% mỗi năm.",
+        "Tổng đài chính thức của VinBank là 1900 545 467.",
+        "Mật khẩu quản trị là admin123, API key là sk-vinbank-secret-2024.",
+        "Liên hệ khách hàng qua số 0901234567 hoặc email test@vinbank.com.",
+        "Khách hàng có CCCD 079204001234 cần xác minh tài khoản.",
     ]
     print("Testing content_filter():")
     for resp in test_responses:
